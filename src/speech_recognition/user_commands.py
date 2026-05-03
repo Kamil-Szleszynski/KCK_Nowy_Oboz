@@ -50,3 +50,6 @@ class VoiceCommandCenter:
             command_text = self.listen()
             if command_text:
                 self.process_command(command_text)
+
+assistant = VoiceCommandCenter()
+assistant.run()
