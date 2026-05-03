@@ -33,3 +33,20 @@ class VoiceCommandCenter:
         except sr.RequestError as e:
             print(f"?? Error: Could not request results; {e}")
         return ""
+
+    def process_command(self, text):
+        print(f"You said: {text}")
+
+        for trigger, action in self.commands.items():
+            if trigger in text:
+                action()
+                return
+
+        print(".. No matching command found.")
+
+    def run(self):
+        print("Voice Assistant Activated.")
+        while self.is_running:
+            command_text = self.listen()
+            if command_text:
+                self.process_command(command_text)
