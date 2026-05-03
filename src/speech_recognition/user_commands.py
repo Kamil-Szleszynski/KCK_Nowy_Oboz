@@ -18,3 +18,18 @@ class VoiceCommandCenter:
     def shutdown(self):
         print(">> Assistant: Shutting down. Goodbye!")
         self.is_running = False
+
+    def listen(self):
+        with self.microphone as source:
+            print("\n--- Listening... ---")
+            self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
+            audio = self.recognizer.listen(source)
+
+        try:
+            raw_text = self.recognizer.recognize_google(audio, language=self.language)
+            return raw_text.lower()
+        except sr.UnknownValueError:
+            print("?? Error: Could not understand audio.")
+        except sr.RequestError as e:
+            print(f"?? Error: Could not request results; {e}")
+        return ""
