@@ -1,3 +1,5 @@
+from msvcrt import locking
+
 import cv2
 import threading
 import mediapipe as mp  # używana wersja mediapipe 0.10.21
@@ -37,10 +39,11 @@ class CameraStream:
 
 class DeadliftAnalyzer:
     def __init__(self):
-        self.stage = "setup"  # setup, lifting, lockout, lowering
+        self.stage = "standing"  # standing ,setup, lifting, lockout, lowering
         self.feedback = "Ustaw sie do sztangi"
         self.running = True
-
+        self.feedback_lock = threading.Lock()
+        self.front_error = False
         # Narzędzia MediaPipe
         self.mp_pose = mp.solutions.pose
         self.mp_drawing = mp.solutions.drawing_utils
@@ -61,12 +64,26 @@ class DeadliftAnalyzer:
 
     def analyze_front(self, landmarks):
         """Analiza z przodu (Laptop): Sprawdzanie czy barki i biodra są równo (symetria)"""
-        left_shoulder_y = landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER.value].y
-        right_shoulder_y = landmarks[self.mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y
+        left_shoulder = landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER.value]
+        right_shoulder = landmarks[self.mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
+        left_hip = landmarks[self.mp_pose.PoseLandmark.LEFT_HIP.value]
+        right_hip = landmarks[self.mp_pose.PoseLandmark.RIGHT_HIP.value]
 
-        if abs(left_shoulder_y - right_shoulder_y) > 0.05:
-            self.feedback = "Krzywe barki! Wyrownaj chwyt."
+        angle_shoulders = np.abs(np.arctan2(left_shoulder.y - right_shoulder.y, left_shoulder.x - right_shoulder.x) * 180.0 / np.pi)
+        angle_hips = np.abs(np.arctan2(left_hip.y - right_hip.y, left_hip.x - right_hip.x) * 180.0 / np.pi)
 
+        # Normalizujemy kąty, aby 0 oznaczało idealny poziom
+        dev_shoulders = np.abs(angle_shoulders - 180) if angle_shoulders > 90 else angle_shoulders
+        dev_hips = np.abs(angle_hips - 180) if angle_hips > 90 else angle_hips
+        with self.feedback_lock:
+            if  dev_shoulders > 5.0:
+                self.feedback = "Krzywe barki! Wyrownaj chwyt."
+                self.front_error = True
+            elif dev_hips > 5.0:
+                self.feedback = "Krzywe biodra! Pchaj rowno z obu nog."
+                self.front_error = True
+            else:
+                self.front_error = False
     def analyze_side(self, landmarks):
         """Analiza z boku (Telefon): Główna mechanika martwego ciągu"""
         left_shoulder = [landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER.value].x,
@@ -81,22 +98,53 @@ class DeadliftAnalyzer:
         left_knee_angle = self.calculate_angle(left_hip, left_knee, left_ankle)
         left_hip_angle = self.calculate_angle(left_shoulder, left_hip, left_knee)
 
-        if left_knee_angle < 100 and left_hip_angle < 90:
-            self.stage = "setup"
-            self.feedback = "Pozycja startowa OK. Ciagnij!"
+        with self.feedback_lock:
+            if self.front_error:
+                return
 
-        if self.stage == "setup" and left_hip_angle > 120 and left_knee_angle < 120:
-            self.feedback = "Biodra za wysoko! Obniz miednice."
+            # 1. CZŁOWIEK DOPIERO STOI (Stan początkowy przed ćwiczeniem)
+            if self.stage == "standing":
+                if left_knee_angle < 112 and left_hip_angle < 95:
+                    self.stage = "setup"
+                    self.feedback = "Pozycja startowa OK. Ciagnij!"
+                else:
+                    self.feedback = "Ustaw sie do sztangi"
+                return
 
-        if left_knee_angle > 160 and left_hip_angle > 160:
-            if self.stage != "lockout":
-                self.feedback = "Pelny wyprost. Brawo!"
+            # 2. FAZA STARTOWA (Gdy już ćwiczy i wraca na dół do kolejnego powtórzenia)
+            if left_knee_angle < 112 and left_hip_angle < 95:
+                self.stage = "setup"
+                self.feedback = "Pozycja startowa OK. Ciagnij!"
+                return
+
+            # 3. BŁĄD: Biodra "strzelają" do góry (Tylko jeśli startuje z dołu)
+            if self.stage == "setup" and left_knee_angle > 115 and left_hip_angle < 85:
+                self.feedback = "Biodra za wysoko! Nie prostuj kolan za wczesnie."
+                return
+
+            # 4. FAZA WZNOSZENIA (Ruch z dołu w górę)
+            if self.stage == "setup" and (left_knee_angle >= 112 or left_hip_angle >= 95):
+                self.stage = "lifting"
+                self.feedback = "Wznoszenie Trzymaj proste plecy!"
+                return
+
+            # 5. FAZA LOCKOUT (Pełny wyprost - dozwolony tylko, jeśli wcześniej podnosił)
+            if self.stage == "lifting" and left_knee_angle > 165 and left_hip_angle > 165:
                 self.stage = "lockout"
-        elif left_knee_angle < 140:
-            if self.stage == "lockout":
-                self.stage = "lowering"
-                self.feedback = "Kontroluj opuszczanie"
+                self.feedback = "Pelny wyprost. Brawo!"
+                return
 
+            # 6. FAZA OPUSZCZANIA
+            if self.stage == "lockout" and (left_knee_angle < 158 or left_hip_angle < 155):
+                self.stage = "lowering"
+                self.feedback = "Kontroluj opuszczanie ciężaru."
+                return
+
+            # 7. POWRÓT DO PODNOSZENIA (Gdyby po drodze w dół zatrzymał się i zaczął znowu ciągnąć)
+            if self.stage == "lowering" and (left_knee_angle > 112 and left_knee_angle < 155):
+                    # Opcjonalnie możesz tu zresetować do "setup" lub "lifting" przy odłożeniu ciężaru
+                if left_knee_angle < 115 and left_hip_angle < 100:
+                    self.stage = "setup"
     def report_feedback_loop(self):
         """Funkcja przeznaczona do działania w osobnym wątku - wypisuje status co 2 sekundy"""
         while self.running:
@@ -145,6 +193,8 @@ class DeadliftAnalyzer:
         self.running = False
         cam_front.stop()
         cam_side.stop()
+        self.pose_front.close()
+        self.pose_side.close()
         cv2.destroyAllWindows()
 
 
