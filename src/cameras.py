@@ -48,6 +48,8 @@ class DeadliftAnalyzer:
         self.mp_pose = mp.solutions.pose
         self.mp_drawing = mp.solutions.drawing_utils
         self.end = False
+        self.points = 100
+
 
         # Dwa osobne modele dla dwóch perspektyw
         self.pose_front = self.mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
@@ -80,8 +82,10 @@ class DeadliftAnalyzer:
             if  dev_shoulders > 5.0:
                 self.feedback = "Krzywe barki! Wyrownaj chwyt."
                 self.front_error = True
+                self.points -= 0.10
             elif dev_hips > 10.0:
                 self.feedback = "Krzywe biodra! Pchaj rowno z obu nóg."
+                self.points -= 0.10
                 self.front_error = True
             else:
                 self.front_error = False
@@ -123,18 +127,21 @@ class DeadliftAnalyzer:
             # 3. BŁĄD: Biodra "strzelają" do góry (Tylko jeśli startuje z dołu)
             if self.stage == "setup" and left_knee_angle > 115 and left_hip_angle < 85:
                 self.feedback = "Biodra za wysoko! Nie prostuj kolan za wczesnie."
+                self.points -= 0.10
                 return
 
             # 4. FAZA WZNOSZENIA (Ruch z dołu w górę)
             if self.stage == "setup" and (left_knee_angle >= 112 or left_hip_angle >= 95):
                 self.stage = "lifting"
                 self.feedback = "Wznoszenie Trzymaj proste plecy!"
+                self.points -= 0.10
                 return
 
             # 5. FAZA LOCKOUT (Pełny wyprost - dozwolony tylko, jeśli wcześniej podnosił)
             if self.stage == "lifting" and left_knee_angle > 165 and left_hip_angle > 165:
                 self.stage = "lockout"
                 self.feedback = "Pelny wyprost. Brawo!"
+                self.points -= 0.10
                 return
 
             # 6. FAZA OPUSZCZANIA
@@ -186,7 +193,7 @@ class DeadliftAnalyzer:
                 self.mp_drawing.draw_landmarks(frame_s, results_s.pose_landmarks, self.mp_pose.POSE_CONNECTIONS)
                 self.analyze_side(results_s.pose_landmarks.landmark)
 
-            cv2.putText(frame_f, f"Status: {self.feedback}", (10, 30),
+            cv2.putText(frame_f, f"Status: {self.feedback}\nPoints {self.points}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
 
             combined = cv2.hconcat([frame_f, frame_s])
