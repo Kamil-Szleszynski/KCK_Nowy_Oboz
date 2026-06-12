@@ -5,6 +5,7 @@ import threading
 import mediapipe as mp  # używana wersja mediapipe 0.10.21
 import numpy as np
 import time
+from SpeechAssistant import speak
 
 
 class CameraStream:
@@ -14,7 +15,6 @@ class CameraStream:
         self.ret, self.frame = False, None
         self.started = False
         self.read_lock = threading.Lock()
-
     def start(self):
         self.started = True
         self.thread = threading.Thread(target=self.update, args=(), daemon=True)
@@ -47,6 +47,7 @@ class DeadliftAnalyzer:
         # Narzędzia MediaPipe
         self.mp_pose = mp.solutions.pose
         self.mp_drawing = mp.solutions.drawing_utils
+        self.end = False
 
         # Dwa osobne modele dla dwóch perspektyw
         self.pose_front = self.mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
@@ -79,8 +80,8 @@ class DeadliftAnalyzer:
             if  dev_shoulders > 5.0:
                 self.feedback = "Krzywe barki! Wyrownaj chwyt."
                 self.front_error = True
-            elif dev_hips > 5.0:
-                self.feedback = "Krzywe biodra! Pchaj rowno z obu nog."
+            elif dev_hips > 10.0:
+                self.feedback = "Krzywe biodra! Pchaj rowno z obu nóg."
                 self.front_error = True
             else:
                 self.front_error = False
@@ -94,14 +95,16 @@ class DeadliftAnalyzer:
                      landmarks[self.mp_pose.PoseLandmark.LEFT_KNEE.value].y]
         left_ankle = [landmarks[self.mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
                       landmarks[self.mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
-
+        right_hand = landmarks[self.mp_pose.PoseLandmark.RIGHT_WRIST.value]
+        right_shoulder = landmarks[self.mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
         left_knee_angle = self.calculate_angle(left_hip, left_knee, left_ankle)
         left_hip_angle = self.calculate_angle(left_shoulder, left_hip, left_knee)
 
         with self.feedback_lock:
             if self.front_error:
                 return
-
+            if right_hand.y < (right_shoulder.y - 0.05):
+                self.end = True
             # 1. CZŁOWIEK DOPIERO STOI (Stan początkowy przed ćwiczeniem)
             if self.stage == "standing":
                 if left_knee_angle < 112 and left_hip_angle < 95:
@@ -153,7 +156,7 @@ class DeadliftAnalyzer:
 
     def get_current_status(self):
         """Zwraca aktualny feedback oraz fazę jako zmienne do wykorzystania poza klasą"""
-        return self.feedback, self.stage
+        return self.feedback, self.stage, self.end
     def main_loop(self):
         cam_front = CameraStream(0).start()
         cam_side = CameraStream("http://10.165.247.219:8080/video").start()
@@ -163,10 +166,11 @@ class DeadliftAnalyzer:
 
         print("Uruchomiono system dwukamerowy z raportowaniem w tle. Naciśnij 'q', aby zamknąć.")
 
-        while True:
+        while (True):
             ret_f, frame_f = cam_front.read()
             ret_s, frame_s = cam_side.read()
-
+            if self.end == True:
+                break;
             if not ret_f or not ret_s or frame_f is None or frame_s is None:
                 continue
 
@@ -205,7 +209,10 @@ if __name__ == "__main__":
     try:
         while True:
             time.sleep(1.0)  # pytamy co sekundę
-            komunikat, faza = analyzer.get_current_status()
+            komunikat, faza, end = analyzer.get_current_status()
             print(f"[Zewnetrzny Odczyt] Komunikat: {komunikat} | Faza: {faza}")
+            speak(komunikat)
+            if end == True:
+                break
     except KeyboardInterrupt:
         print("Zakończono odczyt zewnętrzny.")
