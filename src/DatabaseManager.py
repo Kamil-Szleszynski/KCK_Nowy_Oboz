@@ -77,3 +77,28 @@ class DatabaseManager:
             print(f"[BAZA DANYCH] Błąd krytyczny podczas zapisu: {e}")
         finally:
             conn.close()
+
+    def fetch_series_with_reps(self, series_id):
+        """Pobiera szczegóły konkretnej serii wraz z wynikami wszystkich jej powtórzeń"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT rep_number, score 
+            FROM reps_details 
+            WHERE series_id = ? 
+            ORDER BY rep_number ASC
+        ''', (series_id,))
+
+        reps = cursor.fetchall()
+        conn.close()
+        return reps
+
+    def fetch_all_series(self):
+        """Pobiera listę wszystkich odbytych serii"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM series_history ORDER BY id DESC")
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
