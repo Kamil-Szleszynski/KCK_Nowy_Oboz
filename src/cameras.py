@@ -214,7 +214,7 @@ class DeadliftAnalyzer:
                 self.mp_drawing.draw_landmarks(frame_s, results_s.pose_landmarks, self.mp_pose.POSE_CONNECTIONS)
                 self.analyze_side(results_s.pose_landmarks.landmark)
 
-            cv2.putText(frame_f, f"Status: {self.feedback}", (10, 30),
+            cv2.putText(frame_f, f"Status: {self.feedback}\nPoints {self.points}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
             cv2.putText(frame_f, f"Reps: {self.repetitions}", (10, 60),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2, cv2.LINE_AA)
