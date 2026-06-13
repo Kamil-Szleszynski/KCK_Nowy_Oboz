@@ -155,10 +155,7 @@ class DeadliftAnalyzer:
             # 4. FAZA: Lockout (Zaliczenie powtórzenia z blokadą)
             if self.stage == "lifting" and left_knee_angle > lockout_angle and left_hip_angle > lockout_angle:
                 self.stage = "lockout"
-                if not self.rep_counted:  # <-- TEGO BRAKOWAŁO (Zapobiega nabijaniu powtórzeń)
-                    self.repetitions += 1
-                    self.rep_counted = True
-                self.feedback = f"Zaliczone! Powtorzenie: {self.repetitions}"
+                self.rep_counted = False
                 return
 
             # 5. FAZA: Opuszczanie
@@ -170,8 +167,9 @@ class DeadliftAnalyzer:
             # 6. FAZA: Reset do dołu (Odblokowanie zliczania)
             if self.stage == "lowering" and left_knee_angle < setup_knee_max and left_hip_angle < setup_hip_max:
                 self.stage = "setup"
-                self.rep_counted = False
-                self.feedback = "Pozycja startowa OK. Kolejne powtorzenie!"
+                if not self.rep_counted:  # <-- TEGO BRAKOWAŁO (Zapobiega nabijaniu powtórzeń)
+                    self.repetitions += 1
+                self.feedback = f"Zaliczone! Powtorzenie: {self.repetitions} Kolejne powtorzenie!"
 
     def report_feedback_loop(self):
         """Funkcja przeznaczona do działania w osobnym wątku - wypisuje status co 2 sekundy"""
