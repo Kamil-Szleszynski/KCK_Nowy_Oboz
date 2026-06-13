@@ -48,10 +48,12 @@ class DeadliftAnalyzer:
         # Narzędzia MediaPipe
         self.mp_pose = mp.solutions.pose
         self.mp_drawing = mp.solutions.drawing_utils
+
         self.end = False
         self.repetitions = 0
         self.want_repetitions = 0
         self.rep_counted = False
+        self.points = 100.0
 
         # Dwa osobne modele dla dwóch perspektyw
         self.pose_front = self.mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
@@ -89,9 +91,11 @@ class DeadliftAnalyzer:
             if dev_shoulders > 12.0:
                 self.feedback = "Krzywe barki! Wyrownaj chwyt."
                 self.front_error = True
+                self.points -= 0.10  # Utrata punktów za błąd postawy
             elif dev_hips > 15.0:
                 self.feedback = "Krzywe biodra! Pchaj rowno z obu nog."
                 self.front_error = True
+                self.points -= 0.10  # Utrata punktów za błąd postawy
             else:
                 self.front_error = False
 
@@ -135,6 +139,7 @@ class DeadliftAnalyzer:
             # 2. BŁĄD: Biodra "strzelają" do góry
             if self.stage == "setup" and left_knee_angle > 140 and left_hip_angle < 90:
                 self.feedback = "Biodra za wysoko! Nie prostuj kolan za wczesnie."
+                self.points -= 0.10  # Utrata punktów za błąd postawy
                 return
 
             # 3. FAZA: Wznoszenie
@@ -172,7 +177,7 @@ class DeadliftAnalyzer:
 
     def get_current_status(self):
         """Zwraca 4 zmienne: feedback, fazę, end oraz liczbę powtórzeń"""
-        return self.feedback, self.stage, self.end, self.repetitions  # <-- TEGO BRAKOWAŁO
+        return self.feedback, self.stage, self.end, self.repetitions, self.points  # <-- TEGO BRAKOWAŁO
 
     def main_loop(self):
         cam_front = CameraStream(0).start()
@@ -209,6 +214,8 @@ class DeadliftAnalyzer:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
             cv2.putText(frame_f, f"Reps: {self.repetitions}", (10, 60),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2, cv2.LINE_AA)
+            cv2.putText(frame_f, f"Punkty: {int(self.points)}", (10, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
 
             combined = cv2.hconcat([frame_f, frame_s])
             cv2.imshow("ANALIZA MATWREGO CIAGU: LEWA (FRONT) | PRAWA (BOK)", combined)
@@ -233,7 +240,7 @@ if __name__ == "__main__":
         while True:
             time.sleep(1.0)  # pytamy co sekundę
             # <-- ODBIERAMY 4 ZMIENNE ZAMIAST 3
-            komunikat, faza, end, reps = analyzer.get_current_status()
+            komunikat, faza, end, reps,points = analyzer.get_current_status()
             print(f"[Zewnetrzny Odczyt] Komunikat: {komunikat} | Faza: {faza} | Reps: {reps}")
             speak(komunikat)
             if end == True:
