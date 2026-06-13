@@ -34,7 +34,11 @@ class CameraStream:
 
     def stop(self):
         self.started = False
-        self.cap.release()
+        if hasattr(self, 'thread') and self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+
+        if self.cap.isOpened():
+            self.cap.release()
 
 
 class DeadliftAnalyzer:
@@ -187,14 +191,16 @@ class DeadliftAnalyzer:
         reporter_thread.start()
 
         print("Uruchomiono system dwukamerowy z raportowaniem w tle. Naciśnij 'q', aby zamknąć.")
-
+        self.reps = 0
         while True:
             ret_f, frame_f = cam_front.read()
             ret_s, frame_s = cam_side.read()
 
             if self.end == True:
                 break
-
+            if(self.repetitions==self.want_repetitions ):
+                self.end = True
+                break
             if not ret_f or not ret_s or frame_f is None or frame_s is None:
                 continue
 
@@ -221,6 +227,7 @@ class DeadliftAnalyzer:
             cv2.imshow("ANALIZA MATWREGO CIAGU: LEWA (FRONT) | PRAWA (BOK)", combined)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
+                self.end = True
                 break
 
         self.running = False
@@ -239,7 +246,6 @@ if __name__ == "__main__":
     try:
         while True:
             time.sleep(1.0)  # pytamy co sekundę
-            # <-- ODBIERAMY 4 ZMIENNE ZAMIAST 3
             komunikat, faza, end, reps,points = analyzer.get_current_status()
             print(f"[Zewnetrzny Odczyt] Komunikat: {komunikat} | Faza: {faza} | Reps: {reps}")
             speak(komunikat)
