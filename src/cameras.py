@@ -1,5 +1,3 @@
-from msvcrt import locking
-
 import cv2
 import threading
 import mediapipe as mp  # używana wersja mediapipe 0.10.21
@@ -15,6 +13,7 @@ class CameraStream:
         self.ret, self.frame = False, None
         self.started = False
         self.read_lock = threading.Lock()
+
     def start(self):
         self.started = True
         self.thread = threading.Thread(target=self.update, args=(), daemon=True)
@@ -37,21 +36,29 @@ class CameraStream:
         self.started = False
         self.cap.release()
 
+
 class DeadliftAnalyzer:
     def __init__(self):
-        self.stage = "standing"  # standing ,setup, lifting, lockout, lowering
+        self.stage = "standing"  # standing, setup, lifting, lockout, lowering
         self.feedback = "Ustaw sie do sztangi"
         self.running = True
         self.feedback_lock = threading.Lock()
         self.front_error = False
+
         # Narzędzia MediaPipe
         self.mp_pose = mp.solutions.pose
         self.mp_drawing = mp.solutions.drawing_utils
         self.end = False
+        self.repetitions = 0
+        self.want_repetitions = 0
+        self.rep_counted = False
 
         # Dwa osobne modele dla dwóch perspektyw
         self.pose_front = self.mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
         self.pose_side = self.mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+
+    def set_want_repetitions(self, a):
+        self.want_repetitions = a
 
     def calculate_angle(self, a, b, c):
         a = np.array(a)
@@ -70,21 +77,24 @@ class DeadliftAnalyzer:
         left_hip = landmarks[self.mp_pose.PoseLandmark.LEFT_HIP.value]
         right_hip = landmarks[self.mp_pose.PoseLandmark.RIGHT_HIP.value]
 
-        angle_shoulders = np.abs(np.arctan2(left_shoulder.y - right_shoulder.y, left_shoulder.x - right_shoulder.x) * 180.0 / np.pi)
+        angle_shoulders = np.abs(
+            np.arctan2(left_shoulder.y - right_shoulder.y, left_shoulder.x - right_shoulder.x) * 180.0 / np.pi)
         angle_hips = np.abs(np.arctan2(left_hip.y - right_hip.y, left_hip.x - right_hip.x) * 180.0 / np.pi)
 
         # Normalizujemy kąty, aby 0 oznaczało idealny poziom
         dev_shoulders = np.abs(angle_shoulders - 180) if angle_shoulders > 90 else angle_shoulders
         dev_hips = np.abs(angle_hips - 180) if angle_hips > 90 else angle_hips
+
         with self.feedback_lock:
-            if  dev_shoulders > 5.0:
+            if dev_shoulders > 12.0:
                 self.feedback = "Krzywe barki! Wyrownaj chwyt."
                 self.front_error = True
-            elif dev_hips > 10.0:
-                self.feedback = "Krzywe biodra! Pchaj rowno z obu nóg."
+            elif dev_hips > 15.0:
+                self.feedback = "Krzywe biodra! Pchaj rowno z obu nog."
                 self.front_error = True
             else:
                 self.front_error = False
+
     def analyze_side(self, landmarks):
         """Analiza z boku (Telefon): Główna mechanika martwego ciągu"""
         left_shoulder = [landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER.value].x,
@@ -95,59 +105,65 @@ class DeadliftAnalyzer:
                      landmarks[self.mp_pose.PoseLandmark.LEFT_KNEE.value].y]
         left_ankle = [landmarks[self.mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
                       landmarks[self.mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
+
         right_hand = landmarks[self.mp_pose.PoseLandmark.RIGHT_WRIST.value]
         right_shoulder = landmarks[self.mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
+
         left_knee_angle = self.calculate_angle(left_hip, left_knee, left_ankle)
         left_hip_angle = self.calculate_angle(left_shoulder, left_hip, left_knee)
 
         with self.feedback_lock:
             if self.front_error:
                 return
+
             if right_hand.y < (right_shoulder.y - 0.05):
                 self.end = True
-            # 1. CZŁOWIEK DOPIERO STOI (Stan początkowy przed ćwiczeniem)
+
+            setup_knee_max = 130
+            setup_hip_max = 115
+            lockout_angle = 160
+
+            # 1. STAN: Stojący
             if self.stage == "standing":
-                if left_knee_angle < 112 and left_hip_angle < 95:
+                if left_knee_angle < setup_knee_max and left_hip_angle < setup_hip_max:
                     self.stage = "setup"
                     self.feedback = "Pozycja startowa OK. Ciagnij!"
                 else:
                     self.feedback = "Ustaw sie do sztangi"
                 return
 
-            # 2. FAZA STARTOWA (Gdy już ćwiczy i wraca na dół do kolejnego powtórzenia)
-            if left_knee_angle < 112 and left_hip_angle < 95:
-                self.stage = "setup"
-                self.feedback = "Pozycja startowa OK. Ciagnij!"
-                return
-
-            # 3. BŁĄD: Biodra "strzelają" do góry (Tylko jeśli startuje z dołu)
-            if self.stage == "setup" and left_knee_angle > 115 and left_hip_angle < 85:
+            # 2. BŁĄD: Biodra "strzelają" do góry
+            if self.stage == "setup" and left_knee_angle > 140 and left_hip_angle < 90:
                 self.feedback = "Biodra za wysoko! Nie prostuj kolan za wczesnie."
                 return
 
-            # 4. FAZA WZNOSZENIA (Ruch z dołu w górę)
-            if self.stage == "setup" and (left_knee_angle >= 112 or left_hip_angle >= 95):
+            # 3. FAZA: Wznoszenie
+            if self.stage == "setup" and (left_knee_angle >= setup_knee_max or left_hip_angle >= setup_hip_max):
                 self.stage = "lifting"
-                self.feedback = "Wznoszenie Trzymaj proste plecy!"
+                self.feedback = "Wznoszenie. Trzymaj proste plecy!"
                 return
 
-            # 5. FAZA LOCKOUT (Pełny wyprost - dozwolony tylko, jeśli wcześniej podnosił)
-            if self.stage == "lifting" and left_knee_angle > 165 and left_hip_angle > 165:
+            # 4. FAZA: Lockout (Zaliczenie powtórzenia z blokadą)
+            if self.stage == "lifting" and left_knee_angle > lockout_angle and left_hip_angle > lockout_angle:
                 self.stage = "lockout"
-                self.feedback = "Pelny wyprost. Brawo!"
+                if not self.rep_counted:  # <-- TEGO BRAKOWAŁO (Zapobiega nabijaniu powtórzeń)
+                    self.repetitions += 1
+                    self.rep_counted = True
+                self.feedback = f"Zaliczone! Powtorzenie: {self.repetitions}"
                 return
 
-            # 6. FAZA OPUSZCZANIA
-            if self.stage == "lockout" and (left_knee_angle < 158 or left_hip_angle < 155):
+            # 5. FAZA: Opuszczanie
+            if self.stage == "lockout" and (left_knee_angle < 155 or left_hip_angle < 155):
                 self.stage = "lowering"
-                self.feedback = "Kontroluj opuszczanie ciężaru."
+                self.feedback = "Kontroluj opuszczanie ciezaru."
                 return
 
-            # 7. POWRÓT DO PODNOSZENIA (Gdyby po drodze w dół zatrzymał się i zaczął znowu ciągnąć)
-            if self.stage == "lowering" and (left_knee_angle > 112 and left_knee_angle < 155):
-                    # Opcjonalnie możesz tu zresetować do "setup" lub "lifting" przy odłożeniu ciężaru
-                if left_knee_angle < 115 and left_hip_angle < 100:
-                    self.stage = "setup"
+            # 6. FAZA: Reset do dołu (Odblokowanie zliczania)
+            if self.stage == "lowering" and left_knee_angle < setup_knee_max and left_hip_angle < setup_hip_max:
+                self.stage = "setup"
+                self.rep_counted = False
+                self.feedback = "Pozycja startowa OK. Kolejne powtorzenie!"
+
     def report_feedback_loop(self):
         """Funkcja przeznaczona do działania w osobnym wątku - wypisuje status co 2 sekundy"""
         while self.running:
@@ -155,22 +171,25 @@ class DeadliftAnalyzer:
             time.sleep(2.0)
 
     def get_current_status(self):
-        """Zwraca aktualny feedback oraz fazę jako zmienne do wykorzystania poza klasą"""
-        return self.feedback, self.stage, self.end
+        """Zwraca 4 zmienne: feedback, fazę, end oraz liczbę powtórzeń"""
+        return self.feedback, self.stage, self.end, self.repetitions  # <-- TEGO BRAKOWAŁO
+
     def main_loop(self):
         cam_front = CameraStream(0).start()
-        cam_side = CameraStream("http://10.165.247.219:8080/video").start()
+        cam_side = CameraStream("http://10.211.229.127:8080/video").start()
 
         reporter_thread = threading.Thread(target=self.report_feedback_loop, daemon=True)
         reporter_thread.start()
 
         print("Uruchomiono system dwukamerowy z raportowaniem w tle. Naciśnij 'q', aby zamknąć.")
 
-        while (True):
+        while True:
             ret_f, frame_f = cam_front.read()
             ret_s, frame_s = cam_side.read()
+
             if self.end == True:
-                break;
+                break
+
             if not ret_f or not ret_s or frame_f is None or frame_s is None:
                 continue
 
@@ -188,12 +207,15 @@ class DeadliftAnalyzer:
 
             cv2.putText(frame_f, f"Status: {self.feedback}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
+            cv2.putText(frame_f, f"Reps: {self.repetitions}", (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2, cv2.LINE_AA)
 
             combined = cv2.hconcat([frame_f, frame_s])
             cv2.imshow("ANALIZA MATWREGO CIAGU: LEWA (FRONT) | PRAWA (BOK)", combined)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
+
         self.running = False
         cam_front.stop()
         cam_side.stop()
@@ -206,11 +228,13 @@ if __name__ == "__main__":
     analyzer = DeadliftAnalyzer()
     watek_analizy = threading.Thread(target=analyzer.main_loop, daemon=True)
     watek_analizy.start()
+
     try:
         while True:
             time.sleep(1.0)  # pytamy co sekundę
-            komunikat, faza, end = analyzer.get_current_status()
-            print(f"[Zewnetrzny Odczyt] Komunikat: {komunikat} | Faza: {faza}")
+            # <-- ODBIERAMY 4 ZMIENNE ZAMIAST 3
+            komunikat, faza, end, reps = analyzer.get_current_status()
+            print(f"[Zewnetrzny Odczyt] Komunikat: {komunikat} | Faza: {faza} | Reps: {reps}")
             speak(komunikat)
             if end == True:
                 break
