@@ -1,9 +1,9 @@
 import pyttsx3
 
 def speak(audio):
-    engine = pyttsx3.init()
-    voices = engine.getProperty('voices')
-    engine.setProperty('voice', voices[0].id)
-    engine.say(audio)
-    engine.runAndWait()
+    engine = pyttsx3.init() #uruchomienie silnika mowy
+    voices = engine.getProperty('voices') #pobranie listy wszystkich lektorow
+    engine.setProperty('voice', voices[0].id) #ustawienie konkretnego glosu do czytania
+    engine.say(audio) #wyslanie komunikatu
+    engine.runAndWait() #powiedznie na glos komunikatu
 
