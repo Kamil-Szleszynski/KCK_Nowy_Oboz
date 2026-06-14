@@ -1,12 +1,10 @@
 import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
+from DatabaseManager import DatabaseManager
 
 
 class DeadliftApp(tk.Tk):
-    """Główna klasa aplikacji zarządzająca oknem i przełączaniem widoków."""
-
-    # Dodaliśmy parametr on_start_training
     def __init__(self, on_start_training=None):
         super().__init__()
 
@@ -39,14 +37,16 @@ class DeadliftApp(tk.Tk):
         self.show_frame("MainMenu")
 
     def show_frame(self, page_name):
-        """Podnosi wskazany ekran na wierzch."""
+        """Podnosi wskazany ekran na wierzch i odświeża historię."""
         frame = self.frames[page_name]
+
+        if page_name == "TrainingHistory":
+            frame.refresh_list()
+
         frame.tkraise()
 
 
 class MainMenu(tk.Frame):
-    """Ekran początkowy z wyborem rozpoczęcia treningu lub historii."""
-
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
@@ -64,8 +64,6 @@ class MainMenu(tk.Frame):
 
 
 class TrainingSetup(tk.Frame):
-    """Ekran konfiguracji parametrów treningu i gabarytów użytkownika."""
-
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
@@ -76,7 +74,6 @@ class TrainingSetup(tk.Frame):
         form_frame = tk.Frame(self)
         form_frame.pack(pady=10)
 
-        # Zmieniłem etykietę na "Ilość serii:", skoro niżej dodałeś "Powtórzenia"
         tk.Label(form_frame, text="Ilość serii:", font=("Helvetica", 12)).grid(row=0, column=0, padx=10, pady=10,
                                                                                sticky="e")
         self.entry_sets = tk.Entry(form_frame, font=("Helvetica", 12))
@@ -92,7 +89,6 @@ class TrainingSetup(tk.Frame):
         self.entry_weight = tk.Entry(form_frame, font=("Helvetica", 12))
         self.entry_weight.grid(row=2, column=1, padx=10, pady=10)
 
-        # Poprawiony wiersz (row=3) i domknięte parametry
         tk.Label(form_frame, text="Powtórzenia:", font=("Helvetica", 12)).grid(row=3, column=0, padx=10, pady=10,
                                                                                sticky="e")
         self.entry_reps = tk.Entry(form_frame, font=("Helvetica", 12))
@@ -106,25 +102,21 @@ class TrainingSetup(tk.Frame):
         btn_back.grid(row=0, column=0, padx=10)
 
         btn_confirm = tk.Button(btn_frame, text="Zatwierdź i start", font=("Helvetica", 12), width=15, bg="green",
-                                fg="white",
-                                command=self.save_and_start)
+                                fg="white", command=self.save_and_start)
         btn_confirm.grid(row=0, column=1, padx=10)
 
     def save_and_start(self):
-        """Waliduje dane i wysyła je do kontrolera (main.py)"""
         try:
             sets = int(self.entry_sets.get())
             height = float(self.entry_height.get())
             weight = float(self.entry_weight.get())
-            reps = int(self.entry_reps.get())  # Poprawiona literówka i nawiasy
+            reps = int(self.entry_reps.get())
 
-            # Czyścimy pola
             self.entry_sets.delete(0, tk.END)
             self.entry_height.delete(0, tk.END)
             self.entry_weight.delete(0, tk.END)
             self.entry_reps.delete(0, tk.END)
 
-            # Przekazujemy wszystkie 4 wartości do main.py!
             if self.controller.on_start_training:
                 self.controller.on_start_training(sets, height, weight, reps)
 
@@ -133,20 +125,30 @@ class TrainingSetup(tk.Frame):
 
 
 class TrainingHistory(tk.Frame):
-    """Ekran wyświetlający historię treningów."""
-
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
+        self.db = DatabaseManager()
 
         label = tk.Label(self, text="Historia Treningów", font=("Helvetica", 20, "bold"))
         label.pack(pady=30)
 
-        listbox = tk.Listbox(self, font=("Helvetica", 12), width=60, height=15)
-        listbox.insert(1, "12.10.2023 - 4 serie - Poprawność: 85%")
-        listbox.insert(2, "14.10.2023 - 5 serii - Poprawność: 90%")
-        listbox.pack(pady=10)
+        self.listbox = tk.Listbox(self, font=("Helvetica", 12), width=70, height=15)
+        self.listbox.pack(pady=10)
 
         btn_back = tk.Button(self, text="Wróć do Menu", font=("Helvetica", 12), width=20,
                              command=lambda: controller.show_frame("MainMenu"))
         btn_back.pack(pady=20)
+
+    def refresh_list(self):
+        """Czyści listbox i wypełnia go aktualnymi danymi prosto z bazy."""
+        self.listbox.delete(0, tk.END)
+        rows = self.db.fetch_all_series()
+
+        if not rows:
+            self.listbox.insert(tk.END, "Brak zapisanych treningów w bazie.")
+            return
+
+        for row in rows:
+            wpis = f"ID Serii: {row[0]} | Data: {row[1]} | Zrobione Powtórzenia: {row[2]} | Średnia: {row[3]}%"
+            self.listbox.insert(tk.END, wpis)
