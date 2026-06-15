@@ -2,7 +2,6 @@ import cv2
 import threading
 import mediapipe as mp # używana wersja mediapipe 0.10.21
 import numpy as np # używana do trygonometrii katów
-import time
 
 
 class CameraStream:

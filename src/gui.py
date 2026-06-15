@@ -1,6 +1,5 @@
 # Import biblioteki tkinter do tworzenia interfejsu graficznego
 import tkinter as tk
-from tkinter import ttk
 from tkinter import messagebox
 # Import klasy odpowiedzialnej za operacje na bazie danych treningów
 from DatabaseManager import DatabaseManager
